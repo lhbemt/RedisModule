@@ -1,0 +1,2 @@
+# RedisModule
+将redis内存数据库用关系型数据库描述，同时支持select的简单查找
