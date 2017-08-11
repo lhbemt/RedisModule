@@ -14,6 +14,7 @@ enum class RedisCommand
 	INCR_COMMAND, // 自增字段
 	HSET_COMMAND, // hash字段命令
 	HGET_COMMAND, // hget
+	SMEMBERS_COMMAND, // smembers
 };
 
 enum class RedisExistKey
@@ -186,6 +187,17 @@ struct IndexValue // 索引的值
 	{
 		nToken = 0;
 		memset(this->fieldValue, 0, sizeof(this->fieldValue));
+	}
+};
+
+struct DataRecord // 注意得到改记录后要自己释放内存
+{
+	void* pData; // json格式的记录
+	int   nLen;
+	DataRecord()
+	{
+		pData = nullptr;
+		nLen = 0;
 	}
 };
 

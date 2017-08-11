@@ -265,9 +265,73 @@ bool CParseSql::SelectFromTable() // 查询 以结果集的方式返回
 	{
 
 	}
-	DoSelect(vectFields, tree, tableName);
-	// 查询过后delete true里的内存
 
+	DataRecord** pRecord = nullptr;
+	int nRecords = 0;
+	bool bRet = DoSelect(vectFields, tree, tableName, pRecord, nRecords);
+	if (!bRet)
+	{
+		m_strError = "no such records"; // 查询失败
+		return false;
+	}
+	// 查询过后delete tree里的内存
+	if (pRecord) // 有记录
+	{
+		for (int i = 0; i < nRecords; ++i)
+		{
+			if (pRecord[i])
+			{
+				if ((pRecord[i])->pData) // 解析数据
+				{
+					Json::Reader jsonReader;
+					Json::Value  jsonValue;
+					jsonReader.parse((const char*)(pRecord[i])->pData, (const char*)(pRecord[i])->pData + (pRecord[i])->nLen, jsonValue);
+					Json::Value::Members jsonMembers = jsonValue.getMemberNames();
+					for (auto iter = jsonMembers.begin(); iter != jsonMembers.end(); iter++)
+					{
+						std::cout << (*iter) << ":";
+						std::cout << (jsonValue[*iter]).asString() << "\t";
+					}
+					std::cout << std::endl;
+				}
+			}
+		}
+	}
+
+	// 释放内存
+	if (pRecord)
+	{
+		for (int i = 0; i < nRecords; ++i)
+		{
+			if (pRecord[i])
+			{
+				delete[](pRecord[i])->pData;
+				delete (pRecord[i]);
+			}
+		}
+		delete[] pRecord;
+	}
+
+	std::queue<QueryTree*> queueTree;
+	if (tree)
+	{
+		queueTree.push(tree);
+		while (!queueTree.empty())
+		{
+			QueryTree* pTree = queueTree.front();
+			queueTree.pop();
+			if (pTree->lTree)
+				queueTree.push(pTree->lTree);
+			if (pTree->rTree)
+				queueTree.push(pTree->rTree);
+			// delete
+			delete pTree->pData->condition;
+			delete pTree->pData;
+			delete pTree;
+		}
+	}
+
+	return true;
 }
 
 bool CParseSql::InsertIntoTable()
@@ -452,7 +516,7 @@ bool CParseSql::SetCommand(RedisCommand RCommand)
 	return RCommand == RedisCommand::SET_COMMAND || RCommand == RedisCommand::SET_SADD || RCommand == RedisCommand::HSET_COMMAND;
 }
 
-bool CParseSql::DoSelect(std::vector<std::string>& vectFields, QueryTree* pTree, const char* tableName)
+bool CParseSql::DoSelect(std::vector<std::string>& vectFields, QueryTree* pTree, const char* tableName , DataRecord**& pRecords, int& nReords)
 {
 	// 先检查表是否存在
 	bool bExists = false;
@@ -472,6 +536,34 @@ bool CParseSql::DoSelect(std::vector<std::string>& vectFields, QueryTree* pTree,
 				m_strError = "no such field";
 				return false;
 			}
+		}
+	}
+	else // 是select * 获取全部表的字段
+	{
+		void* pFiled = new char[1024];
+		memset(pFiled, 0, 1024);
+		int nLen = 0;
+		bool bRet = ExecuteRedisCommand(RedisCommand::SMEMBERS_COMMAND, pFiled, nLen, "smembers %s_fields", tableName);
+		if (!bRet)
+		{
+			m_strError = "get field error";
+			return false;
+		}
+		else
+		{
+			char* sBegin = (char*)pFiled;
+			while (*((char*)pFiled))
+			{
+				if (*(char*)pFiled == ',')
+				{
+					char Field[128] = { 0x00 };
+					memcpy(Field, sBegin, (char*)pFiled - sBegin);
+					vectFields.push_back(Field);
+					sBegin = (char*)pFiled + 1;
+				}
+				pFiled = (char*)pFiled + 1;
+			}
+			vectFields.push_back(sBegin);
 		}
 	}
 	std::vector<std::string> condiField;
@@ -552,7 +644,16 @@ bool CParseSql::DoSelect(std::vector<std::string>& vectFields, QueryTree* pTree,
 							getFields.emplace_back(std::move(*iter));
 						}
 						// 根据条件树查找是否符合为该条记录
-
+						bRet = IsSatisfyRecord(getFields, getValues, pTree);
+						if (bRet) // 该条记录符合查找条件
+						{
+							pRecords = new DataRecord*[1];
+							pRecords[0] = new DataRecord;
+							pRecords[0]->pData = new char[nLen];
+							pRecords[0]->nLen = nLen;
+							memcpy(pRecords[0]->pData, pValue, nLen);
+							nReords = 1;
+						}
 					}
 				}
 				break;
@@ -568,6 +669,10 @@ bool CParseSql::DoSelect(std::vector<std::string>& vectFields, QueryTree* pTree,
 			std::stringstream ss;
 			ss << (char*)pValue;
 			ss >> records;
+			pRecords = new DataRecord*[records];
+			for (int i = 0; i < records; i++)
+				pRecords[i] = nullptr;
+			int nSatisfy = 0;
 			for (long long i = 1; i <= records; ++i) // 记录从1开始
 			{
 				memset(pValue, 0, 1024);
@@ -586,11 +691,67 @@ bool CParseSql::DoSelect(std::vector<std::string>& vectFields, QueryTree* pTree,
 						getFields.emplace_back(std::move(*iter));
 					}
 					// 根据条件树查找是否符合为该条记录
+					bRet = IsSatisfyRecord(getFields, getValues, pTree);
+					if (bRet) // 该条记录符合查找条件
+					{
+						pRecords[nSatisfy] = new DataRecord;
+						pRecords[nSatisfy]->pData = new char[nLen];
+						pRecords[nSatisfy]->nLen = nLen;
+						memcpy(pRecords[nSatisfy]->pData, pValue, nLen);
+						nSatisfy++;
+						getFields.clear();
+						getValues.clear();
+					}
+				}
+			}
+			nReords = records;
+		}
+	}
+	return true;
+}
 
+bool CParseSql::IsSatisfyRecord(std::vector<std::string>& vectFields, std::vector<std::string>& vectValues, QueryTree* pTree) // float类型先不处理
+{
+	bool bSatisfy = false;
+	bool bSatisfyLeft = false;
+	bool bSatisfyRight = false;
+	if (pTree)
+	{
+		bool bFind = false;
+		int nIndex = 0;
+		if (pTree->pData)
+		{
+			//auto iter = std::find_if(vectFields.begin(), vectFields.end(), [pTree](std::string& field) { return field == std::string(pTree->pData->condition->fieldName); });
+			for (int i = 0; i < vectFields.size(); i++)
+			{
+				if (strcmp(vectFields[i].c_str() , pTree->pData->condition->fieldName) == 0)
+				{
+					bFind = true;
+					nIndex = i;
+					break;
+				}
+			}
+			//if (iter == vectFields.end())
+			if (!bFind)
+				bSatisfy = false;
+			else
+			{
+				//int nIndex = iter - vectFields.begin();
+				if (pTree->pData->condition->nToken == token_eq) // 相等
+				{
+					bSatisfy = (strcmp(vectValues[nIndex].c_str(), pTree->pData->condition->fieldValue) == 0 ? true : false);
 				}
 			}
 		}
 	}
-
-
+	if (pTree->lTree)
+		bSatisfyLeft = IsSatisfyRecord(vectFields, vectValues, pTree->lTree);
+	if (pTree->rTree)
+		bSatisfyRight = IsSatisfyRecord(vectFields, vectValues, pTree->rTree);
+	if (pTree->pData->nToken == token_normalend) // 判断节点是and or 或者 正常结束
+		return bSatisfy;
+	if (pTree->pData->nToken == token_and)
+		return bSatisfyLeft && bSatisfyRight;
+	if (pTree->pData->nToken == token_or)
+		return bSatisfyLeft || bSatisfyRight;
 }

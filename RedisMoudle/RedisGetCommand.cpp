@@ -100,28 +100,82 @@ bool CRedisGetCommand::Execute(redisContext* hDBHandle, RedisCommand redisComman
 			else
 				res.status = GET_STATUS::STATUS_ERR;
 		}
-
-
-		
-		//if (pReply->elements == 0 && !pReply->str) // 执行
-		//	bRet = false;
-		//else if (pReply->elements == 0 && pReply->str)
-		//{
-		//	m_vectValues.push_back(pReply->str);
-		//	bRet = true;
-		//}
-		//else if (pReply->elements > 0)
-		//{
-		//	for (int i = 0; i < pReply->elements; i++)
-		//	{
-		//		redisReply* pElements = pReply->element[i];
-		//		if (!pElements->str) // 没有该字段 false
-		//			bRet = false;
-		//		else
-		//			m_vectValues.push_back(pElements->str);
-		//	}
-		//}
-
+		else if (redisCommandM == RedisCommand::SMEMBERS_COMMAND) // smembers
+		{
+			if (pReply->type == REDIS_REPLY_ARRAY)
+			{
+				if (pReply->elements == 0)
+					res.status = GET_STATUS::STATUS_NOT_EXISTS; // 没有该集合
+				else
+				{
+					int nUsed = 0;
+					int nTotal = 0;
+					for (int i = 0; i < pReply->elements; ++i)
+					{
+						redisReply* pElements = pReply->element[i];
+						if (pElements->type == REDIS_REPLY_STRING)
+						{
+							if (nTotal - nUsed < (pElements->len + 1)) // 留一个位置给,
+							{
+								if (!res.pData)
+								{
+									res.pData = new char[pElements->len + 1];
+									memset(res.pData, 0, pElements->len + 1);
+									memcpy(res.pData, pElements->str, pElements->len);
+									res.nLen = pElements->len;
+									char iDot = ',';
+									memcpy((char*)res.pData + res.nLen, &iDot, 1);
+									nUsed = pElements->len + 1;
+									res.nLen += 1;
+									nTotal = pElements->len + 1;
+								}
+								else
+								{
+									nTotal = res.nLen * 2;
+									char* pExtend = new char[nTotal]; // 可能内存超出 导致new失败
+									while (pElements->len > nTotal - nUsed)
+									{
+										delete[] pExtend;
+										pExtend = nullptr;
+										nTotal *= 2;
+										pExtend = new char[nTotal];
+									}
+									memset(pExtend, 0, nTotal);
+									memcpy(pExtend, res.pData, nUsed);
+									delete[] res.pData;
+									res.pData = pExtend;
+									memcpy(pExtend + nUsed, pElements->str, pElements->len);
+									res.nLen = nUsed + pElements->len;
+									char iDot = ',';
+									memcpy((char*)res.pData + res.nLen, &iDot, 1);
+									nUsed += pElements->len + 1;
+									res.nLen += 1;
+								}
+							}
+							else
+							{
+								memcpy((char*)res.pData + nUsed, pElements->str, pElements->len);
+								res.nLen = nUsed + pElements->len;
+								char iDot = ',';
+								memcpy((char*)res.pData + res.nLen, &iDot, 1);
+								nUsed += pElements->len + 1;
+								res.nLen += 1;
+							}
+						}
+						else
+						{
+							res.status = GET_STATUS::STATUS_ERR;
+							break;
+						}
+					}
+					// 最后一个,用0代替
+					((char*)res.pData)[res.nLen - 1] = 0;
+					res.status = GET_STATUS::STATUS_OK;
+				}
+			}
+			else
+				res.status = GET_STATUS::STATUS_ERR;
+		}
 		bRet = true;
 		freeReplyObject(pReply);
 		return bRet;

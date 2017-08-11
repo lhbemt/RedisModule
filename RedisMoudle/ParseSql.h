@@ -3,6 +3,7 @@
 #include "Scanner.h"
 #include "redis/hiredis.h"
 #include <iostream>
+#include <list>
 
 const int TOKEN_ITEM_SIZE = 120;
 
@@ -78,7 +79,8 @@ private:
 	bool CheckKeyExists(const char* pKey, RedisExistKey, bool& bExist,const char* tablename = nullptr); //检测字段是否存在 检测字段时需要tablename
 	bool ExecuteRedisCommand(RedisCommand RCommand, void* pGetValue, int& nLen,char* command, ...); // 对返回值不感兴趣则pGetValue为nullptr
 	bool SetCommand(RedisCommand RCommand);
-	bool DoSelect(std::vector<std::string>& vectFields, QueryTree* pTree, const char* tableName); // 进行查找
+	bool DoSelect(std::vector<std::string>& vectFields, QueryTree* pTree, const char* tableName, DataRecord**& pRecords, int& nReords); // 进行查找
+	bool IsSatisfyRecord(std::vector<std::string>& vectFields, std::vector<std::string>& vectValues, QueryTree* pTree); // 是否为满足查询条件的记录
 private:
 	CScanner m_Scanner;
 	std::string m_strError;
