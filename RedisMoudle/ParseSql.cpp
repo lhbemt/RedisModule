@@ -8,6 +8,7 @@
 #include "RedisGetCommand.h"
 #include <queue>
 #include <sstream>
+#include "Cursor.h"
 
 TokensTable::HashNode TokensTable::hashTable[TOKEN_ITEM_SIZE];
 
@@ -263,6 +264,50 @@ bool CParseSql::SelectFromTable() // 查询 以结果集的方式返回
 	}
 	else // 查询某几个字段 多表查询
 	{
+		do 
+		{
+			if (nWordToken == token_word)
+			{
+				vectFields.push_back(m_Scanner.GetWord());
+			}
+			else if (nWordToken == token_idot) // 过滤','
+			{
+
+			}
+			else
+			{
+				m_strError = "invalid input, need fieldname";
+				return false;
+			}
+			nWordToken = m_Scanner.Scan();
+		} while (nWordToken != token_from);
+
+		nWordToken = m_Scanner.Scan();
+		if (nWordToken != token_word)
+		{
+			m_strError = "invalid symbol, need tablename";
+			return false;
+		}
+		else
+		{
+			strcpy_s(tableName, sizeof(tableName), m_Scanner.GetWord()); // 表名
+			nWordToken = m_Scanner.Scan();
+			if (nWordToken == EOF) // 无条件查询
+			{
+
+			}
+			else // 有条件查询
+			{
+				if (nWordToken == token_where)
+					m_Scanner.ReadCondition(tree); // 查找条件
+				else
+				{
+					m_strError = "invalid symbol, need where";
+					return false;
+				}
+
+			}
+		}
 
 	}
 
@@ -274,27 +319,23 @@ bool CParseSql::SelectFromTable() // 查询 以结果集的方式返回
 		m_strError = "no such records"; // 查询失败
 		return false;
 	}
-	// 查询过后delete tree里的内存
-	if (pRecord) // 有记录
+
+	if (pRecord)
 	{
-		for (int i = 0; i < nRecords; ++i)
+		CCursor cursor(pRecord, nRecords);
+		char strValue[128] = { 0x00 };
+		while (!cursor.EndOfRecord())
 		{
-			if (pRecord[i])
+			memset(strValue, 0, sizeof(strValue));
+			for (auto& field : vectFields)
 			{
-				if ((pRecord[i])->pData) // 解析数据
-				{
-					Json::Reader jsonReader;
-					Json::Value  jsonValue;
-					jsonReader.parse((const char*)(pRecord[i])->pData, (const char*)(pRecord[i])->pData + (pRecord[i])->nLen, jsonValue);
-					Json::Value::Members jsonMembers = jsonValue.getMemberNames();
-					for (auto iter = jsonMembers.begin(); iter != jsonMembers.end(); iter++)
-					{
-						std::cout << (*iter) << ":";
-						std::cout << (jsonValue[*iter]).asString() << "\t";
-					}
-					std::cout << std::endl;
-				}
+				std::cout << field.c_str() << ":";
+				cursor.GetValue(field, strValue, 128);
+				std::cout << strValue;
+				std::cout << "\t";
 			}
+			std::cout << std::endl;
+			cursor.MoveNext();
 		}
 	}
 
@@ -691,7 +732,10 @@ bool CParseSql::DoSelect(std::vector<std::string>& vectFields, QueryTree* pTree,
 						getFields.emplace_back(std::move(*iter));
 					}
 					// 根据条件树查找是否符合为该条记录
-					bRet = IsSatisfyRecord(getFields, getValues, pTree);
+					if (pTree)
+						bRet = IsSatisfyRecord(getFields, getValues, pTree);
+					else // 无查找条件 全部都符合
+						bRet = true;
 					if (bRet) // 该条记录符合查找条件
 					{
 						pRecords[nSatisfy] = new DataRecord;
