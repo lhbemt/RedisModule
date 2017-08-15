@@ -955,7 +955,21 @@ bool CParseSql::IsSatisfyRecord(std::vector<std::string>& vectFields, std::vecto
 	if (pTree->pData->nToken == token_normalend) // 判断节点是and or 或者 正常结束
 		return bSatisfy;
 	if (pTree->pData->nToken == token_and)
-		return bSatisfyLeft && bSatisfyRight;
+	{
+		bool bRet = bSatisfy;
+		if (pTree->lTree)
+			bRet = bRet && bSatisfyLeft;
+		if (pTree->rTree)
+			bRet = bRet && bSatisfyRight;
+		return bRet;
+	}
 	if (pTree->pData->nToken == token_or)
-		return bSatisfyLeft || bSatisfyRight;
+	{
+		bool bRet = bSatisfy;
+		if (pTree->lTree)
+			bRet = bRet || bSatisfyLeft;
+		if (pTree->rTree)
+			bRet = bRet || bSatisfyRight;
+		return bRet;
+	}
 }
