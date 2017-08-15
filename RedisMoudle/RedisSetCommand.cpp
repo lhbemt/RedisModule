@@ -42,6 +42,13 @@ bool CRedisSetCommand::Execute(redisContext* hDBHandle, RedisCommand redisComman
 				m_setStatus = SET_STATUS::STATUS_ERR; // ´íÎó
 				
 		}
+		else if (redisCommandM == RedisCommand::HDEL_COMMAND)
+		{
+			if (pReply->type == REDIS_REPLY_INTEGER && pReply->integer >= 0)
+				m_setStatus = SET_STATUS::STATUS_OK;
+			else
+				m_setStatus = SET_STATUS::STATUS_ERR;
+		}
 		freeReplyObject(pReply);
 		return true;
 	}

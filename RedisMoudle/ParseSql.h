@@ -81,6 +81,7 @@ private:
 	bool SetCommand(RedisCommand RCommand);
 	bool DoSelect(std::vector<std::string>& vectFields, QueryTree* pTree, const char* tableName, DataRecord**& pRecords, int& nReords); // 进行查找
 	bool IsSatisfyRecord(std::vector<std::string>& vectFields, std::vector<std::string>& vectValues, QueryTree* pTree); // 是否为满足查询条件的记录
+	bool TruncateTable(); // truncate table
 private:
 	CScanner m_Scanner;
 	std::string m_strError;

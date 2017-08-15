@@ -15,6 +15,8 @@ enum class RedisCommand
 	HSET_COMMAND, // hash字段命令
 	HGET_COMMAND, // hget
 	SMEMBERS_COMMAND, // smembers
+	HKEYS_COMMAND, //hkeys //获取所有key
+	HDEL_COMMAND, //hdel 删除
 };
 
 enum class RedisExistKey
@@ -55,6 +57,7 @@ enum expression_token // 关键字定义
 	token_index, // 表的索引 用于快速查找
 	token_insert, // 插入数据
 	token_into, // 插入数据
+	token_truncate, // truncate table
 };
 
 struct keyword {
@@ -131,6 +134,9 @@ static struct keyword KeyWords[] = {
 	},
 	{
 		token_into, "into"
+	},
+	{
+		token_truncate, "truncate"
 	}
 };
 
