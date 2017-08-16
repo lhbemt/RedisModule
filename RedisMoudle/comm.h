@@ -17,6 +17,8 @@ enum class RedisCommand
 	SMEMBERS_COMMAND, // smembers
 	HKEYS_COMMAND, //hkeys //获取所有key
 	HDEL_COMMAND, //hdel 删除
+	DEL_COMMAND, // del 删除key 不管key是string list set 还是hash
+	SREM_COMMAND, //srem 
 };
 
 enum class RedisExistKey
