@@ -100,7 +100,7 @@ bool CRedisGetCommand::Execute(redisContext* hDBHandle, RedisCommand redisComman
 			else
 				res.status = GET_STATUS::STATUS_ERR;
 		}
-		else if (redisCommandM == RedisCommand::SMEMBERS_COMMAND || redisCommandM == RedisCommand::HKEYS_COMMAND) // smembers
+		else if (redisCommandM == RedisCommand::SMEMBERS_COMMAND || redisCommandM == RedisCommand::HKEYS_COMMAND || redisCommandM == RedisCommand::HGETALL_COMMAND) // smembers
 		{
 			if (pReply->type == REDIS_REPLY_ARRAY)
 			{

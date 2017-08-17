@@ -19,6 +19,7 @@ enum class RedisCommand
 	HDEL_COMMAND, //hdel 删除
 	DEL_COMMAND, // del 删除key 不管key是string list set 还是hash
 	SREM_COMMAND, //srem 
+	HGETALL_COMMAND, // hgetall
 };
 
 enum class RedisExistKey

@@ -557,6 +557,7 @@ bool CParseSql::TruncateTable(const char* tableName)
 	bool bRet;
 	bRet = ExecuteRedisCommand(RedisCommand::SMEMBERS_COMMAND, pIndexFields, nLen, "smembers %s_index", tableName);
 	char* sBegin = (char*)pIndexFields;
+	char* pBegin = (char*)pIndexFields;
 	while (*pIndexFields)
 	{
 		if (*pIndexFields == ',')
@@ -571,6 +572,7 @@ bool CParseSql::TruncateTable(const char* tableName)
 	if (*sBegin)
 		vectIndexField.push_back(sBegin);
 
+	pIndexFields = pBegin;
 	char* szBuff = new char[1024 * 1024]; // 分配大空间 防止不够
 	for (auto& field : vectIndexField) // 获取索引对应的记录
 	{
@@ -606,17 +608,17 @@ bool CParseSql::TruncateTable(const char* tableName)
 				if (!bRet)
 				{
 					m_strError = "delete index record error";
-					delete szBuff;
+					delete[] szBuff;
 					szBuff = nullptr;
 					return false;
 				}
-				delete szBuff;
+				delete[] szBuff;
 				szBuff = nullptr;
 			}
 		}
 
 	}
-
+	pIndexFields = pBegin;
 	// 删除记录
 	memset(pIndexFields, 0, 1024 * 1024);
 	szBuff = new char[1024 * 1024];
@@ -657,8 +659,10 @@ bool CParseSql::TruncateTable(const char* tableName)
 			}
 		}
 	}
-	delete szBuff;
+	delete[] szBuff;
 	szBuff = nullptr;
+
+	delete[] pIndexFields;
 
 	// 最后把记录值回退到0
 	bRet = ExecuteRedisCommand(RedisCommand::SET_COMMAND, nullptr, nLen, "set %s_table_id %d", tableName, 0); // 从0开始
@@ -709,6 +713,7 @@ bool CParseSql::DropTable()
 	memset(pIndexFields, 0, 1024 * 1024);
 	bRet = ExecuteRedisCommand(RedisCommand::SMEMBERS_COMMAND, pIndexFields, nLen, "smembers %s_index", tableName);
 	char* sBegin = (char*)pIndexFields;
+	char* pBegin = pIndexFields;
 	while (*pIndexFields)
 	{
 		if (*pIndexFields == ',')
@@ -723,6 +728,7 @@ bool CParseSql::DropTable()
 	if (*sBegin)
 		vectIndexField.push_back(sBegin);
 
+	pIndexFields = pBegin;
 	for (auto& indexField : vectIndexField)
 	{
 		bRet = ExecuteRedisCommand(RedisCommand::DEL_COMMAND, nullptr, nLen, "del %s_%s_index", tableName, indexField.c_str());
@@ -757,6 +763,8 @@ bool CParseSql::DropTable()
 	}
 	if (*sBegin)
 		vectFields.push_back(sBegin);
+
+	pIndexFields = pBegin;
 	for (auto& Field : vectFields)
 	{
 		bRet = ExecuteRedisCommand(RedisCommand::SREM_COMMAND, nullptr, nLen, "srem %s_fields %s", tableName, Field.c_str());
@@ -948,6 +956,7 @@ bool CParseSql::DoSelect(std::vector<std::string>& vectFields, QueryTree* pTree,
 		else
 		{
 			char* sBegin = (char*)pFiled;
+			char* pBegin = (char*)pFiled;
 			while (*((char*)pFiled))
 			{
 				if (*(char*)pFiled == ',')
@@ -961,6 +970,7 @@ bool CParseSql::DoSelect(std::vector<std::string>& vectFields, QueryTree* pTree,
 			}
 			vectFields.push_back(sBegin);
 		}
+		delete[] pFiled;
 	}
 	std::vector<std::string> condiField;
 	std::vector<std::string> indexField;
@@ -1130,6 +1140,7 @@ bool CParseSql::DoSelect(std::vector<std::string>& vectFields, QueryTree* pTree,
 								bool bRet;
 								bRet = ExecuteRedisCommand(RedisCommand::SMEMBERS_COMMAND, pIndexFields, nLen, "smembers %s_index", tableName);
 								char* sBegin = (char*)pIndexFields;
+								char* pBegin = (char*)pIndexFields;
 								while (*pIndexFields)
 								{
 									if (*pIndexFields == ',')
@@ -1143,15 +1154,47 @@ bool CParseSql::DoSelect(std::vector<std::string>& vectFields, QueryTree* pTree,
 								}
 								if (*sBegin)
 									vectIndexField.push_back(sBegin);
+								pIndexFields = pBegin;
 
-								for (auto& field : vectIndexField) // 获取索引对应的记录
+								for (auto& field : vectIndexField) // 获取索引对应的记录 为快速找到索引需再建一张value key表，这里暂不处理 使用循环查找
 								{
-									bRet = ExecuteRedisCommand(RedisCommand::HDEL_COMMAND, nullptr, nLen, "hdel %s_%s_index %I64d", tableName, field.c_str(), i);
+									std::string strRecordIndex = "";
+									std::stringstream is;
+									is << i;
+									is >> strRecordIndex;
+									bRet = ExecuteRedisCommand(RedisCommand::HGETALL_COMMAND, pIndexFields, nLen, "hgetall %s_%s_index", tableName, field.c_str());
 									if (!bRet)
 									{
-										m_strError = "delete index record error";
+										m_strError = "select indexfield error";
 									}
-
+									else
+									{
+										std::vector<std::string> vectAll;
+										char* sBegin = (char*)pIndexFields;
+										while (*pIndexFields)
+										{
+											if (*pIndexFields == ',')
+											{
+												char Field[128] = { 0x00 };
+												memcpy(Field, sBegin, pIndexFields - sBegin);
+												vectAll.push_back(Field);
+												sBegin = pIndexFields + 1;
+											}
+											pIndexFields = pIndexFields + 1;
+										}
+										if (*sBegin)
+											vectAll.push_back(sBegin);
+										auto iter = std::find_if(vectAll.begin(), vectAll.end(), [strRecordIndex](std::string& str) { return strRecordIndex == str; });
+										if (iter != vectAll.end())
+										{
+											bRet = ExecuteRedisCommand(RedisCommand::HDEL_COMMAND, nullptr, nLen, "hdel %s_%s_index %s", tableName, field.c_str(), (*(--iter)).c_str());
+											if (!bRet)
+											{
+												m_strError = "delete index record error";
+											}
+										}
+										pIndexFields = pBegin;
+									}
 								}
 
 								delete[] pIndexFields;
