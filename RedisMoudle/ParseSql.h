@@ -80,11 +80,14 @@ private:
 	bool ExecuteRedisCommand(RedisCommand RCommand, void* pGetValue, int& nLen,char* command, ...); // 对返回值不感兴趣则pGetValue为nullptr
 	bool SetCommand(RedisCommand RCommand);
 	bool DoSelect(std::vector<std::string>& vectFields, QueryTree* pTree, const char* tableName, DataRecord**& pRecords, int& nReords, bool bDelete = false); // 进行查找
+	bool DoSelect(std::vector<std::string>& vectFields, QueryTree* pTree, const char* tableName, DataRecord**& pRecords, int& nReords, std::vector<int>& vectNums); // 进行查找 vectNums为相对应的记录
+
 	bool IsSatisfyRecord(std::vector<std::string>& vectFields, std::vector<std::string>& vectValues, QueryTree* pTree); // 是否为满足查询条件的记录
 	bool TruncateTable(); // truncate table
 	bool TruncateTable(const char* pTableName);
 	bool DropTable(); // drop table
 	bool DeleteTable(); // delete table
+	bool UpdateTable(); // update table
 private:
 	CScanner m_Scanner;
 	std::string m_strError;
