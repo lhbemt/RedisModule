@@ -1557,30 +1557,17 @@ bool CParseSql::DoSelect(std::vector<std::string>& vectFields, QueryTree* pTree,
 						bRet = IsSatisfyRecord(getFields, getValues, pTree);
 						if (bRet) // 该条记录符合查找条件
 						{
-							//if (!bDelete)
-							//{
-								pRecords = new DataRecord*[1];
-								pRecords[0] = new DataRecord;
-								pRecords[0]->pData = new char[nLen];
-								pRecords[0]->nLen = nLen;
-								memcpy(pRecords[0]->pData, pValue, nLen);
-								nReords = 1;
-								std::stringstream is;
-								is << pRecordNum;
-								int iRecord = 0;
-								is >> iRecord;
-								vectNums.push_back(iRecord);
-							//}
-							//else // 删除该记录
-							//{
-							//	// 先删除索引
-							//	bRet = ExecuteRedisCommand(RedisCommand::HDEL_COMMAND, nullptr, nLen, "hdel %s_%s_index %s", tableName, indexField[i].c_str(), indexValue[i].fieldValue);
-							//	if (!bRet)
-							//		m_strError = "delete index record error";
-							//	bRet = ExecuteRedisCommand(RedisCommand::HDEL_COMMAND, nullptr, nLen, "hdel %s_record %s", tableName, pRecordNum);
-							//	if (!bRet)
-							//		m_strError = "delete record error";
-							//}
+							pRecords = new DataRecord*[1];
+							pRecords[0] = new DataRecord;
+							pRecords[0]->pData = new char[nLen];
+							pRecords[0]->nLen = nLen;
+							memcpy(pRecords[0]->pData, pValue, nLen);
+							nReords = 1;
+							std::stringstream is;
+							is << pRecordNum;
+							int iRecord = 0;
+							is >> iRecord;
+							vectNums.push_back(iRecord);
 						}
 					}
 				}
@@ -1625,96 +1612,14 @@ bool CParseSql::DoSelect(std::vector<std::string>& vectFields, QueryTree* pTree,
 						bRet = true;
 					if (bRet) // 该条记录符合查找条件
 					{
-						//if (!bDelete)
-						//{
-							pRecords[nSatisfy] = new DataRecord;
-							pRecords[nSatisfy]->pData = new char[nLen];
-							pRecords[nSatisfy]->nLen = nLen;
-							memcpy(pRecords[nSatisfy]->pData, pValue, nLen);
-							nSatisfy++;
-							getFields.clear();
-							getValues.clear();
-							vectNums.push_back(i);
-						//}
-						//else
-						//{
-						//	// 先删除索引记录
-						//	{
-						//		//先获取索引字段
-						//		char* pIndexFields = new char[1024 * 1024];
-						//		int nLen = 0;
-						//		std::vector<std::string> vectIndexField;
-						//		memset(pIndexFields, 0, 1024 * 1024);
-						//		bool bRet;
-						//		bRet = ExecuteRedisCommand(RedisCommand::SMEMBERS_COMMAND, pIndexFields, nLen, "smembers %s_index", tableName);
-						//		char* sBegin = (char*)pIndexFields;
-						//		char* pBegin = (char*)pIndexFields;
-						//		while (*pIndexFields)
-						//		{
-						//			if (*pIndexFields == ',')
-						//			{
-						//				char Field[128] = { 0x00 };
-						//				memcpy(Field, sBegin, pIndexFields - sBegin);
-						//				vectIndexField.push_back(Field);
-						//				sBegin = pIndexFields + 1;
-						//			}
-						//			pIndexFields = pIndexFields + 1;
-						//		}
-						//		if (*sBegin)
-						//			vectIndexField.push_back(sBegin);
-						//		pIndexFields = pBegin;
-
-						//		for (auto& field : vectIndexField) // 获取索引对应的记录 为快速找到索引需再建一张value key表，这里暂不处理 使用循环查找
-						//		{
-						//			std::string strRecordIndex = "";
-						//			std::stringstream is;
-						//			is << i;
-						//			is >> strRecordIndex;
-						//			bRet = ExecuteRedisCommand(RedisCommand::HGETALL_COMMAND, pIndexFields, nLen, "hgetall %s_%s_index", tableName, field.c_str());
-						//			if (!bRet)
-						//			{
-						//				m_strError = "select indexfield error";
-						//			}
-						//			else
-						//			{
-						//				std::vector<std::string> vectAll;
-						//				char* sBegin = (char*)pIndexFields;
-						//				while (*pIndexFields)
-						//				{
-						//					if (*pIndexFields == ',')
-						//					{
-						//						char Field[128] = { 0x00 };
-						//						memcpy(Field, sBegin, pIndexFields - sBegin);
-						//						vectAll.push_back(Field);
-						//						sBegin = pIndexFields + 1;
-						//					}
-						//					pIndexFields = pIndexFields + 1;
-						//				}
-						//				if (*sBegin)
-						//					vectAll.push_back(sBegin);
-						//				auto iter = std::find_if(vectAll.begin(), vectAll.end(), [strRecordIndex](std::string& str) { return strRecordIndex == str; });
-						//				if (iter != vectAll.end())
-						//				{
-						//					bRet = ExecuteRedisCommand(RedisCommand::HDEL_COMMAND, nullptr, nLen, "hdel %s_%s_index %s", tableName, field.c_str(), (*(--iter)).c_str());
-						//					if (!bRet)
-						//					{
-						//						m_strError = "delete index record error";
-						//					}
-						//				}
-						//				pIndexFields = pBegin;
-						//			}
-						//		}
-
-						//		delete[] pIndexFields;
-
-						//	}
-
-
-						//	// 直接删除该记录
-						//	bRet = ExecuteRedisCommand(RedisCommand::HDEL_COMMAND, nullptr, nLen, "hdel %s_record %I64d", tableName, i);
-						//	if (!bRet)
-						//		m_strError = "delete record error";
-						//}
+						pRecords[nSatisfy] = new DataRecord;
+						pRecords[nSatisfy]->pData = new char[nLen];
+						pRecords[nSatisfy]->nLen = nLen;
+						memcpy(pRecords[nSatisfy]->pData, pValue, nLen);
+						nSatisfy++;
+						getFields.clear();
+						getValues.clear();
+						vectNums.push_back(i);
 					}
 				}
 			}
