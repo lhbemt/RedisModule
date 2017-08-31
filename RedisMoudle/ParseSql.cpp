@@ -118,19 +118,19 @@ bool CParseSql::Parse(const char* strContent, int nLen)
 	{
 		return InsertIntoTable();
 	}
-	case token_truncate: // truncate table
+	case token_truncate: // truncate table //未处理回滚
 	{
 		return TruncateTable();
 	}
-	case token_drop: // drop table 删除表
+	case token_drop: // drop table 删除表 //未处理回滚
 	{
 		return DropTable();
 	}
-	case token_delete: // delete table
+	case token_delete: // delete table // 未处理回滚
 	{
 		return DeleteTable();
 	}
-	case token_update: // update table
+	case token_update: // update table // 未处理回滚
 	{
 		return UpdateTable();
 	}
@@ -143,6 +143,7 @@ bool CParseSql::CreateTable()
 {
 	char tableName[128] = { 0x00 };
 	std::vector<std::string> vectFields, vectIndex;
+	std::vector<struct RollBack> vectRollBack; // 操作失败的回滚
 	int nWordsToken = m_Scanner.Scan();
 	if (nWordsToken != token_table)
 	{
@@ -198,35 +199,60 @@ bool CParseSql::CreateTable()
 	bool bRet = false;
 	int n;
 	bRet = ExecuteRedisCommand(RedisCommand::SET_COMMAND, nullptr, n, "set %s_table %s", tableName, tableName); // 设置表名
+	struct RollBack roll;
+	char szRollBack[128] = { 0x00 };
+	sprintf_s(szRollBack, sizeof(szRollBack), "del %s_table", tableName);
+	roll.cmd = RedisCommand::DEL_COMMAND;
+	roll.strDes = szRollBack;
+	vectRollBack.emplace_back(std::move(roll));
 	if (!bRet)
 	{
 		m_strError = "set table error";
+		BackUp(vectRollBack);
 		return false;
 	}
 	// 创建表的记录自增值
 	bRet = ExecuteRedisCommand(RedisCommand::SET_COMMAND, nullptr, n, "set %s_table_id %d", tableName, 0); // 从0开始
+	memset(szRollBack, 0, sizeof(szRollBack));
+	sprintf_s(szRollBack, sizeof(szRollBack), "del %s_table_id", tableName);
+	roll.cmd = RedisCommand::DEL_COMMAND;
+	roll.strDes = szRollBack;
+	vectRollBack.emplace_back(std::move(roll));
 	if (!bRet)
 	{
 		m_strError = "set table record id error";
+		BackUp(vectRollBack);
 		return false;
 	}
 	// 设置列名
 	for (auto& field : vectFields)
 	{
-		bRet = ExecuteRedisCommand(RedisCommand::SET_SADD, nullptr, n, "sadd %s_fields %s", tableName, field.c_str()); // 设置列 如果出错，应当回滚 暂时未处理
+		bRet = ExecuteRedisCommand(RedisCommand::SET_SADD, nullptr, n, "sadd %s_fields %s", tableName, field.c_str()); // 设置列
+		memset(szRollBack, 0, sizeof(szRollBack));
+		sprintf_s(szRollBack, sizeof(szRollBack), "srem %s_fields %s", tableName, field.c_str());
+		roll.cmd = RedisCommand::SREM_COMMAND;
+		roll.strDes = szRollBack;
+		vectRollBack.emplace_back(std::move(roll));
 		if (!bRet)
 		{
 			m_strError = "set table field error";
+			BackUp(vectRollBack);
 			return false;
 		}
 	}
 	// 创建索引
 	for (auto& filedIndex : vectIndex)
 	{
-		bRet = ExecuteRedisCommand(RedisCommand::SET_SADD, nullptr, n, "sadd %s_index %s", tableName, filedIndex.c_str()); // 设置索引 如果出错，应当回滚 暂时未处理
+		bRet = ExecuteRedisCommand(RedisCommand::SET_SADD, nullptr, n, "sadd %s_index %s", tableName, filedIndex.c_str()); // 设置索引
+		memset(szRollBack, 0, sizeof(szRollBack));
+		sprintf_s(szRollBack, sizeof(szRollBack), "srem %s_index %s", tableName, filedIndex.c_str());
+		roll.cmd = RedisCommand::SREM_COMMAND;
+		roll.strDes = szRollBack;
+		vectRollBack.emplace_back(std::move(roll));
 		if (!bRet)
 		{
 			m_strError = "set table field error";
+			BackUp(vectRollBack);
 			return false;
 		}
 	}
@@ -419,6 +445,7 @@ bool CParseSql::InsertIntoTable()
 
 	std::vector<std::string> vectFields; // 字段名
 	std::vector<std::string> vectValues; // 值
+	std::vector<struct RollBack> vectRollBack;
 	nWordsToken = m_Scanner.Scan();
 	if (nWordsToken != token_lpair)
 	{
@@ -485,9 +512,18 @@ bool CParseSql::InsertIntoTable()
 	long long* pID = new long long;
 	int n;
 	bRet = ExecuteRedisCommand(RedisCommand::INCR_COMMAND, pID, n,"incr %s_table_id", tableName);
+	
+	struct RollBack roll;
+	char szRollBack[128] = { 0x00 };
+	sprintf_s(szRollBack, sizeof(szRollBack), "decr %s_table_id", tableName);
+	roll.cmd = RedisCommand::DECR_COMMAND;
+	roll.strDes = szRollBack;
+	vectRollBack.emplace_back(std::move(roll));
+
 	if (!bRet)
 	{
 		m_strError = "insert error can't increase record";
+		BackUp(vectRollBack);
 		return false;
 	}
 	// 获得记录id后 首先更新索引记录 // 唯一索引 后面可新增不唯一索引
@@ -497,9 +533,16 @@ bool CParseSql::InsertIntoTable()
 		if (bExists) // 是索引 则设置索引记录
 		{
 			bRet = ExecuteRedisCommand(RedisCommand::HSET_COMMAND, nullptr, n, "hset %s_%s_index %s %I64d", tableName, vectFields[i].c_str(), vectValues[i].c_str(), *pID);
+			//ss << "hdel " << tableName << "_" << vectFields[i].c_str() << "_index " << vectValues[i].c_str();
+			memset(szRollBack, 0, sizeof(szRollBack));
+			sprintf_s(szRollBack, sizeof(szRollBack), "hdel %s_%s_index %s", tableName, vectFields[i].c_str(), vectValues[i].c_str());
+			roll.cmd = RedisCommand::HDEL_COMMAND;
+			roll.strDes = szRollBack;
+			vectRollBack.emplace_back(std::move(roll));
 			if (!bRet)
 			{
 				m_strError = "set index record error";
+				BackUp(vectRollBack);
 				return false;
 			}
 		}
@@ -513,9 +556,16 @@ bool CParseSql::InsertIntoTable()
 
 	// 插入记录
 	bRet = ExecuteRedisCommand(RedisCommand::HSET_COMMAND, nullptr, n, "%s", szBuff);
+	//ss << "hdel " << tableName << "_record " << szRecord;
+	memset(szRollBack, 0, sizeof(szRollBack));
+	roll.cmd = RedisCommand::HDEL_COMMAND;
+	sprintf_s(szRollBack, "hdel %s_record %s", tableName, szRecord);
+	roll.strDes = szRollBack;
+	vectRollBack.emplace_back(std::move(roll));
 	if (!bRet)
 	{
 		m_strError = "insert record error";
+		BackUp(vectRollBack);
 		return false;
 	}
 	delete pID;
@@ -666,7 +716,7 @@ bool CParseSql::TruncateTable(const char* tableName)
 	delete[] szBuff;
 	szBuff = nullptr;
 
-	delete[] pIndexFields;
+	delete[] pBegin;
 
 	// 最后把记录值回退到0
 	bRet = ExecuteRedisCommand(RedisCommand::SET_COMMAND, nullptr, nLen, "set %s_table_id %d", tableName, 0); // 从0开始
@@ -1405,6 +1455,8 @@ bool CParseSql::DoSelect(std::vector<std::string>& vectFields, QueryTree* pTree,
 								m_strError = "delete record error";
 						}
 					}
+					getValues.clear();
+					getFields.clear();
 				}
 			}
 			if (nSatisfy == 0)
@@ -1569,6 +1621,8 @@ bool CParseSql::DoSelect(std::vector<std::string>& vectFields, QueryTree* pTree,
 							is >> iRecord;
 							vectNums.push_back(iRecord);
 						}
+						getValues.clear();
+						getFields.clear();
 					}
 				}
 				break;
@@ -1696,4 +1750,12 @@ bool CParseSql::IsSatisfyRecord(std::vector<std::string>& vectFields, std::vecto
 			bRet = bRet || bSatisfyRight;
 		return bRet;
 	}
+}
+
+bool CParseSql::BackUp(std::vector<struct RollBack>& vectBackUp) //回退
+{
+	int nLen = 0;
+	for (auto& roll : vectBackUp)
+		ExecuteRedisCommand(roll.cmd, nullptr, nLen, (char*)roll.strDes.c_str());
+	return true;
 }

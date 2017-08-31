@@ -82,11 +82,26 @@ int CScanner::Scan()
 	case ',':
 		return token_idot;
 	default:
-		if (isalnum(ch) || ch == '_') // 是字母或数字或者'_'
+		if (isalnum(ch) || ch == '_' || ch == '\'') // 是字母或数字或者'_'或'''
 		{
 			int i = 0;
-			do 
+			do
 			{
+				if (ch == '\'')
+				{
+					m_pWord[i] = 0;
+					do {
+						ch = get();
+						if (ch == EOF)
+							return EOF;
+						if (ch == ' ') // 将空格替换为+ 否则redis命令会失败
+							m_pWord[i++] = '+';
+						else
+							m_pWord[i++] = ch;
+					} while (ch != '\'');
+					m_pWord[--i] = 0;
+					return token_word;
+				}
 				m_pWord[i++] = ch;
 				ch = get();
 				if (ch == ',')

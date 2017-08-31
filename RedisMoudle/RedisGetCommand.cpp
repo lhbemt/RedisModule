@@ -70,7 +70,7 @@ bool CRedisGetCommand::Execute(redisContext* hDBHandle, RedisCommand redisComman
 				else res.status = GET_STATUS::STATUS_ERR; // 错误
 			}
 		}
-		else if (redisCommandM == RedisCommand::INCR_COMMAND) // 自增
+		else if (redisCommandM == RedisCommand::INCR_COMMAND || redisCommandM == RedisCommand::DECR_COMMAND) // 自增 自减
 		{
 			if (pReply->type == REDIS_REPLY_INTEGER)
 			{
@@ -105,7 +105,7 @@ bool CRedisGetCommand::Execute(redisContext* hDBHandle, RedisCommand redisComman
 			if (pReply->type == REDIS_REPLY_ARRAY)
 			{
 				if (pReply->elements == 0)
-					res.status = GET_STATUS::STATUS_NOT_EXISTS; // 没有该集合
+					res.status = GET_STATUS::STATUS_OK; // 没有该集合
 				else
 				{
 					int nUsed = 0;

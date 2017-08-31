@@ -12,6 +12,7 @@ enum class RedisCommand
 	SET_SADD,    // 对集合的add命令
 	SIS_MEMBER,  // 是否是成员
 	INCR_COMMAND, // 自增字段
+	DECR_COMMAND, // 自减字段
 	HSET_COMMAND, // hash字段命令
 	HGET_COMMAND, // hget
 	SMEMBERS_COMMAND, // smembers
@@ -208,6 +209,12 @@ struct DataRecord // 注意得到改记录后要自己释放内存
 		pData = nullptr;
 		nLen = 0;
 	}
+};
+
+struct RollBack // 回滚结构
+{
+	RedisCommand cmd;
+	std::string  strDes;
 };
 
 #endif

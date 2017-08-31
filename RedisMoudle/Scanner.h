@@ -2,6 +2,7 @@
 #define __CSCANNER__H
 
 #include "comm.h"
+#include <iostream>
 #include <vector>
 
 const int nScanSize = 2048; // 初始化缓冲区大小
@@ -20,6 +21,7 @@ public:
 		return m_pWord;
 	}
 	bool ReadCondition(QueryTree*& tree); // 查找条件
+
 private:
 	char get();
 	void unget();

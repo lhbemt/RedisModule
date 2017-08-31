@@ -88,6 +88,8 @@ private:
 	bool DropTable(); // drop table
 	bool DeleteTable(); // delete table
 	bool UpdateTable(); // update table
+
+	bool BackUp(std::vector<struct RollBack>& vectBackUp); // ²Ù×÷Ê§°ÜµÄ»Ø¹ö
 private:
 	CScanner m_Scanner;
 	std::string m_strError;
