@@ -12,12 +12,14 @@
 class CCursor
 {
 public:
-	CCursor(DataRecord** pRecord, int nRecords);
+	CCursor();
 	~CCursor();
 
 public:
 	bool EndOfRecord(); // 无结果集
 	void MoveNext(); // 下一个结果集
+	void Init(DataRecord** pRecord);
+	void CloseRecord();
 	template<class T>
 	void GetValue(std::string strField, T& value, std::string type)
 	{
@@ -116,7 +118,6 @@ private:
 
 private:
 	DataRecord** m_pRecord;
-	int          m_nRecords;
 	int          m_nCurrRecord; // 当前记录
 	std::vector<std::string> m_vectFields; // 字段
 	std::vector<std::string> m_vectValues; // 对应的值

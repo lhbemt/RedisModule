@@ -2,9 +2,8 @@
 #include "json.h"
 
 
-CCursor::CCursor(DataRecord** pRecord, int nRecords) : m_pRecord(pRecord), m_nRecords(nRecords), m_nCurrRecord(0)
+CCursor::CCursor() 
 {
-	ParseCurrentRecord();
 	m_mapType.clear();
 	m_mapType["bool"] = 1;
 	m_mapType["char"] = 2;
@@ -21,15 +20,46 @@ CCursor::~CCursor()
 {
 }
 
+void CCursor::Init(DataRecord** pRecord)
+{
+	m_pRecord = pRecord;
+	m_nCurrRecord = 0;
+	ParseCurrentRecord();
+}
+
+void CCursor::CloseRecord()
+{
+	// ÊÍ·ÅÄÚ´æ
+	int i = 0;
+	if (m_pRecord)
+	{
+		for (int i = 0; i < m_nCurrRecord; ++i)
+			if (m_pRecord[i])
+			{
+				if (m_pRecord[i]->pData)
+				{
+					delete[](m_pRecord[i])->pData;
+					delete (m_pRecord[i]);
+				}
+				else
+					delete m_pRecord[i];
+			}
+		delete[] m_pRecord;
+	}
+
+	m_pRecord = nullptr;
+	m_nCurrRecord = 0;
+}
+
 bool CCursor::EndOfRecord()
 {
-	return m_nCurrRecord > m_nRecords - 1;
+	return m_pRecord[m_nCurrRecord] == nullptr;
 }
 
 void CCursor::MoveNext()
 {
 	m_nCurrRecord++;
-	if (m_nCurrRecord < m_nRecords)
+	if (m_pRecord[m_nCurrRecord])
 		ParseCurrentRecord();
 }
 

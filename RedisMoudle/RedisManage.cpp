@@ -10,6 +10,8 @@ CRedisManage::CRedisManage()
 
 CRedisManage::~CRedisManage()
 {
+	if (m_hDBLogin)
+		redisFree(m_hDBLogin);
 }
 
 bool CRedisManage::Init(const char* strIP, int nPort)

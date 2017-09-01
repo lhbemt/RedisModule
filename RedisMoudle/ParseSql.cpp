@@ -98,7 +98,7 @@ void CParseSql::LoadToken() // 加载关键字
 	AddAllTokens();
 }
 
-bool CParseSql::Parse(const char* strContent, int nLen)
+bool CParseSql::Parse(void** hRecord, const char* strContent, int nLen)
 {
 	m_Scanner.LoadContent(strContent, nLen);
 	int token = m_Scanner.Scan();
@@ -112,7 +112,7 @@ bool CParseSql::Parse(const char* strContent, int nLen)
 	}
 	case token_select: // 选择语句
 	{
-		return SelectFromTable();
+		return SelectFromTable(hRecord);
 	}
 	case token_insert: // 插入数据
 	{
@@ -260,7 +260,7 @@ bool CParseSql::CreateTable()
 	return true;
 }
 
-bool CParseSql::SelectFromTable() // 查询 以结果集的方式返回
+bool CParseSql::SelectFromTable(void** hRecord) // 查询 以结果集的方式返回
 {
 	QueryTree* tree = nullptr; // 查询树
 	std::vector<std::string> vectFields;
@@ -355,45 +355,15 @@ bool CParseSql::SelectFromTable() // 查询 以结果集的方式返回
 
 	DataRecord** pRecord = nullptr;
 	int nRecords = 0;
-	bool bRet = DoSelect(vectFields, tree, tableName, pRecord, nRecords);
+	std::vector<int> vectNums;
+	bool bRet = DoSelect(vectFields, tree, tableName, pRecord, nRecords, vectNums); // need check
 	if (!bRet)
 	{
 		m_strError = "no such records"; // 查询失败
 		return false;
 	}
 
-	if (pRecord)
-	{
-		CCursor cursor(pRecord, nRecords);
-		char strValue[128] = { 0x00 };
-		while (!cursor.EndOfRecord())
-		{
-			memset(strValue, 0, sizeof(strValue));
-			for (auto& field : vectFields)
-			{
-				std::cout << field.c_str() << ":";
-				cursor.GetValue(field, strValue, 128);
-				std::cout << strValue;
-				std::cout << "\t";
-			}
-			std::cout << std::endl;
-			cursor.MoveNext();
-		}
-	}
-
-	// 释放内存
-	if (pRecord)
-	{
-		for (int i = 0; i < nRecords; ++i)
-		{
-			if (pRecord[i])
-			{
-				delete[](pRecord[i])->pData;
-				delete (pRecord[i]);
-			}
-		}
-		delete[] pRecord;
-	}
+	*hRecord = pRecord;
 
 	std::queue<QueryTree*> queueTree;
 	if (tree)
@@ -499,6 +469,23 @@ bool CParseSql::InsertIntoTable()
 		m_strError = "invalid input,fields and values not match";
 		return false;
 	}
+
+	// 先判断是否有索引 目前仅支持唯一索引 索引字段记录相同时返回错误
+	for (int i = 0; i < vectFields.size(); ++i)
+	{
+		bRet = CheckKeyExists(vectFields[i].c_str(), RedisExistKey::IS_INDEX, bExists, tableName);
+		if (bExists) // 是索引 则检查是否已有该索引的记录
+		{
+			int n = 0;
+			bRet = ExecuteRedisCommand(RedisCommand::HGET_COMMAND, nullptr, n, "hget %s_%s_index %s", tableName, vectFields[i].c_str(), vectValues[i].c_str());
+			if (bRet)
+			{
+				m_strError = "already have index record"; // 已经存在该索引记录 插入记录失败
+				return false;
+			}
+		}
+	}
+
 
 	// 打包成json数据
 	Json::Value root;
@@ -892,14 +879,101 @@ bool CParseSql::DeleteTable() // delete
 		return false;
 	}
 	m_Scanner.ReadCondition(tree);
+	std::vector<int> vectNums;
 	if (tree)
 	{
-		bRet = DoSelect(vectFields, tree, tableName, pRecord, nRecords, true);
+		bRet = DoSelect(vectFields, tree, tableName, pRecord, nRecords, vectNums); // need check
 		if (!bRet)
 		{
 			m_strError = "select records error";
 			return false;
 		}
+	}
+
+	// 删除记录 vectNums对应的为记录
+	// 先删除索引记录
+	{
+		for (int k = 0; k < vectNums.size(); ++k)
+		{
+			//先获取索引字段
+			char* pIndexFields = new char[1024 * 1024];
+			int nLen = 0;
+			std::vector<std::string> vectIndexField;
+			memset(pIndexFields, 0, 1024 * 1024);
+			bool bRet;
+			bRet = ExecuteRedisCommand(RedisCommand::SMEMBERS_COMMAND, pIndexFields, nLen, "smembers %s_index", tableName);
+			char* sBegin = (char*)pIndexFields;
+			char* pBegin = (char*)pIndexFields;
+			while (*pIndexFields)
+			{
+				if (*pIndexFields == ',')
+				{
+					char Field[128] = { 0x00 };
+					memcpy(Field, sBegin, pIndexFields - sBegin);
+					vectIndexField.push_back(Field);
+					sBegin = pIndexFields + 1;
+				}
+				pIndexFields = pIndexFields + 1;
+			}
+			if (*sBegin)
+				vectIndexField.push_back(sBegin);
+			pIndexFields = pBegin;
+
+			for (auto& field : vectIndexField) // 获取索引对应的记录 为快速找到索引需再建一张value key表，这里暂不处理 使用循环查找
+			{
+				std::string strRecordIndex = "";
+				std::stringstream is;
+				is << vectNums[k];
+				is >> strRecordIndex;
+				bRet = ExecuteRedisCommand(RedisCommand::HGETALL_COMMAND, pIndexFields, nLen, "hgetall %s_%s_index", tableName, field.c_str());
+				if (!bRet)
+				{
+					m_strError = "select indexfield error";
+				}
+				else
+				{
+					std::vector<std::string> vectAll;
+					char* sBegin = (char*)pIndexFields;
+					while (*pIndexFields)
+					{
+						if (*pIndexFields == ',')
+						{
+							char Field[128] = { 0x00 };
+							memcpy(Field, sBegin, pIndexFields - sBegin);
+							vectAll.push_back(Field);
+							sBegin = pIndexFields + 1;
+						}
+						pIndexFields = pIndexFields + 1;
+					}
+					if (*sBegin)
+						vectAll.push_back(sBegin);
+					auto iter = std::find_if(vectAll.begin(), vectAll.end(), [strRecordIndex](std::string& str) { return strRecordIndex == str; });
+					if (iter != vectAll.end())
+					{
+						bRet = ExecuteRedisCommand(RedisCommand::HDEL_COMMAND, nullptr, nLen, "hdel %s_%s_index %s", tableName, field.c_str(), (*(--iter)).c_str());
+						if (!bRet)
+						{
+							m_strError = "delete index record error";
+						}
+					}
+					pIndexFields = pBegin;
+				}
+			}
+
+			delete[] pBegin;
+			
+			// 直接删除该记录
+			int nDelete = vectNums[k];
+			bRet = ExecuteRedisCommand(RedisCommand::HDEL_COMMAND, nullptr, nLen, "hdel %s_record %I64d", tableName, (long long)nDelete);
+			if (!bRet)
+				m_strError = "delete record error";
+		}
+	}
+
+	//delete
+	if (pRecord)
+	{
+
 	}
 
 	std::queue<QueryTree*> queueTree;
@@ -1165,315 +1239,6 @@ bool CParseSql::SetCommand(RedisCommand RCommand)
 		|| RCommand == RedisCommand::SREM_COMMAND || RCommand == RedisCommand::DEL_COMMAND;
 }
 
-bool CParseSql::DoSelect(std::vector<std::string>& vectFields, QueryTree* pTree, const char* tableName , DataRecord**& pRecords, int& nReords, bool bDelete) // 是delete还要记录相应的id
-{
-	// 先检查表是否存在
-	bool bExists = false;
-	CheckKeyExists(tableName, RedisExistKey::IS_TABLE, bExists);
-	if (!bExists)
-	{
-		m_strError = "no such table";
-		return false;
-	}
-	if (!vectFields.empty()) // 检查所有字段是否正确
-	{
-		for (auto& filed : vectFields)
-		{
-			CheckKeyExists(filed.c_str(), RedisExistKey::IS_FIELD, bExists, tableName);
-			if (!bExists)
-			{
-				m_strError = "no such field";
-				return false;
-			}
-		}
-	}
-	else // 是select * 获取全部表的字段
-	{
-		void* pFiled = new char[1024];
-		memset(pFiled, 0, 1024);
-		int nLen = 0;
-		char* pBegin = nullptr;
-		bool bRet = ExecuteRedisCommand(RedisCommand::SMEMBERS_COMMAND, pFiled, nLen, "smembers %s_fields", tableName);
-		if (!bRet)
-		{
-			m_strError = "get field error";
-			return false;
-		}
-		else
-		{
-			char* sBegin = (char*)pFiled;
-			pBegin = (char*)pFiled;
-			while (*((char*)pFiled))
-			{
-				if (*(char*)pFiled == ',')
-				{
-					char Field[128] = { 0x00 };
-					memcpy(Field, sBegin, (char*)pFiled - sBegin);
-					vectFields.push_back(Field);
-					sBegin = (char*)pFiled + 1;
-				}
-				pFiled = (char*)pFiled + 1;
-			}
-			vectFields.push_back(sBegin);
-		}
-		pFiled = pBegin;
-		delete[] pFiled;
-	}
-	std::vector<std::string> condiField;
-	std::vector<std::string> indexField;
-	std::vector<IndexValue> indexValue; // 索引字段对应的值
-	std::queue<QueryTree*> queueTree;
-	// 先检查条件树是否有索引字段
-	if (pTree)
-	{
-		queueTree.push(pTree);
-		while (!queueTree.empty())
-		{
-			QueryTree* pFind = queueTree.front();
-			queueTree.pop();
-			if (pFind->pData)
-			{
-				std::string str = pFind->pData->condition->fieldName;
-				condiField.push_back(str);
-				CheckKeyExists(str.c_str(), RedisExistKey::IS_INDEX, bExists, tableName);
-				if (bExists)
-				{
-					IndexValue value;
-					value.nToken = pFind->pData->condition->nToken;
-					strcpy_s(value.fieldValue, sizeof(pFind->pData->condition->fieldValue), pFind->pData->condition->fieldValue);
-					indexField.push_back(str);
-					indexValue.push_back(value);
-				}
-			}
-			if (pFind->lTree)
-				queueTree.push(pFind->lTree);
-			if (pFind->rTree)
-				queueTree.push(pFind->rTree);
-		}
-	}
-
-	// 检查条件字段是否都存在
-	for (auto& filed : condiField)
-	{
-		CheckKeyExists(filed.c_str(), RedisExistKey::IS_FIELD, bExists, tableName);
-		if (!bExists)
-		{
-			m_strError = "no such field";
-			return false;
-		}
-	}
-
-	bool bDoIndex = false;
-	void* pValue = new char[1024];
-	memset(pValue, 0, 1024);
-	int nLen = 0;
-	std::vector<std::string> getFields;
-	std::vector<std::string> getValues;
-	if (!indexField.empty()) // 有索引字段
-	{
-		// 仅先处理"="的情况
-		for (int i = 0; i < indexValue.size(); ++i)
-		{
-			if (indexValue[i].nToken == token_eq) // 相等
-			{
-				bDoIndex = true;
-				bool bRet = ExecuteRedisCommand(RedisCommand::HGET_COMMAND, pValue, nLen, "hget %s_%s_index %s", tableName, indexField[i].c_str(), indexValue[i].fieldValue);
-				if (!bRet)
-					break;
-				else
-				{
-					char pRecordNum[128] = { 0x00 };
-					memcpy(pRecordNum, pValue, 128);
-					bRet = ExecuteRedisCommand(RedisCommand::HGET_COMMAND, pValue, nLen, "hget %s_record %s", tableName, (char*)pValue); // 获取记录信息
-					if (!bRet)
-						break;
-					else // 处理记录
-					{
-						Json::Reader jsonReader;
-						Json::Value  jsonValue;
-						jsonReader.parse((const char*)pValue , (const char*)pValue + nLen, jsonValue);
-						Json::Value::Members jsonMembers = jsonValue.getMemberNames();
-						for (auto iter = jsonMembers.begin(); iter != jsonMembers.end(); iter++)
-						{
-							getValues.emplace_back(std::move((jsonValue[*iter]).asString()));
-							getFields.emplace_back(std::move(*iter));
-						}
-						// 根据条件树查找是否符合为该条记录
-						bRet = IsSatisfyRecord(getFields, getValues, pTree);
-						if (bRet) // 该条记录符合查找条件
-						{
-							if (!bDelete)
-							{
-								pRecords = new DataRecord*[1];
-								pRecords[0] = new DataRecord;
-								pRecords[0]->pData = new char[nLen];
-								pRecords[0]->nLen = nLen;
-								memcpy(pRecords[0]->pData, pValue, nLen);
-								nReords = 1;
-							}
-							else // 删除该记录
-							{
-								// 先删除索引
-								bRet = ExecuteRedisCommand(RedisCommand::HDEL_COMMAND, nullptr, nLen, "hdel %s_%s_index %s", tableName, indexField[i].c_str(), indexValue[i].fieldValue);
-								if (!bRet)
-									m_strError = "delete index record error";
-								bRet = ExecuteRedisCommand(RedisCommand::HDEL_COMMAND, nullptr, nLen, "hdel %s_record %s", tableName, pRecordNum);
-								if (!bRet)
-									m_strError = "delete record error";
-							}
-						}
-					}
-				}
-				break;
-			}
-		}
-	}
-	if (!bDoIndex) // 没有处理索引 按正常方式查找
-	{
-		bool bRet = ExecuteRedisCommand(RedisCommand::GET_COMMAND, pValue, nLen, "get %s_table_id", tableName); // 首先获取总记录有多少条
-		if (bRet)
-		{
-			long long records;
-			std::stringstream ss;
-			ss << (char*)pValue;
-			ss >> records;
-			pRecords = new DataRecord*[records];
-			for (int i = 0; i < records; i++)
-				pRecords[i] = nullptr;
-			int nSatisfy = 0;
-			for (long long i = 1; i <= records; ++i) // 记录从1开始
-			{
-				memset(pValue, 0, 1024);
-				bRet = ExecuteRedisCommand(RedisCommand::HGET_COMMAND, pValue, nLen, "hget %s_record %I64d", tableName, i); // 获取记录信息
-				if (!bRet)
-					continue;
-				else // 处理记录
-				{
-					Json::Reader jsonReader;
-					Json::Value  jsonValue;
-					jsonReader.parse((const char*)pValue, (const char*)pValue + nLen, jsonValue);
-					Json::Value::Members jsonMembers = jsonValue.getMemberNames();
-					for (auto iter = jsonMembers.begin(); iter != jsonMembers.end(); iter++)
-					{
-						getValues.emplace_back(std::move((jsonValue[*iter]).asString()));
-						getFields.emplace_back(std::move(*iter));
-					}
-					// 根据条件树查找是否符合为该条记录
-					if (pTree)
-						bRet = IsSatisfyRecord(getFields, getValues, pTree);
-					else // 无查找条件 全部都符合
-						bRet = true;
-					if (bRet) // 该条记录符合查找条件
-					{
-						if (!bDelete)
-						{
-							pRecords[nSatisfy] = new DataRecord;
-							pRecords[nSatisfy]->pData = new char[nLen];
-							pRecords[nSatisfy]->nLen = nLen;
-							memcpy(pRecords[nSatisfy]->pData, pValue, nLen);
-							nSatisfy++;
-							getFields.clear();
-							getValues.clear();
-						}
-						else
-						{
-							// 先删除索引记录
-							{
-								//先获取索引字段
-								char* pIndexFields = new char[1024 * 1024];
-								int nLen = 0;
-								std::vector<std::string> vectIndexField;
-								memset(pIndexFields, 0, 1024 * 1024);
-								bool bRet;
-								bRet = ExecuteRedisCommand(RedisCommand::SMEMBERS_COMMAND, pIndexFields, nLen, "smembers %s_index", tableName);
-								char* sBegin = (char*)pIndexFields;
-								char* pBegin = (char*)pIndexFields;
-								while (*pIndexFields)
-								{
-									if (*pIndexFields == ',')
-									{
-										char Field[128] = { 0x00 };
-										memcpy(Field, sBegin, pIndexFields - sBegin);
-										vectIndexField.push_back(Field);
-										sBegin = pIndexFields + 1;
-									}
-									pIndexFields = pIndexFields + 1;
-								}
-								if (*sBegin)
-									vectIndexField.push_back(sBegin);
-								pIndexFields = pBegin;
-
-								for (auto& field : vectIndexField) // 获取索引对应的记录 为快速找到索引需再建一张value key表，这里暂不处理 使用循环查找
-								{
-									std::string strRecordIndex = "";
-									std::stringstream is;
-									is << i;
-									is >> strRecordIndex;
-									bRet = ExecuteRedisCommand(RedisCommand::HGETALL_COMMAND, pIndexFields, nLen, "hgetall %s_%s_index", tableName, field.c_str());
-									if (!bRet)
-									{
-										m_strError = "select indexfield error";
-									}
-									else
-									{
-										std::vector<std::string> vectAll;
-										char* sBegin = (char*)pIndexFields;
-										while (*pIndexFields)
-										{
-											if (*pIndexFields == ',')
-											{
-												char Field[128] = { 0x00 };
-												memcpy(Field, sBegin, pIndexFields - sBegin);
-												vectAll.push_back(Field);
-												sBegin = pIndexFields + 1;
-											}
-											pIndexFields = pIndexFields + 1;
-										}
-										if (*sBegin)
-											vectAll.push_back(sBegin);
-										auto iter = std::find_if(vectAll.begin(), vectAll.end(), [strRecordIndex](std::string& str) { return strRecordIndex == str; });
-										if (iter != vectAll.end())
-										{
-											bRet = ExecuteRedisCommand(RedisCommand::HDEL_COMMAND, nullptr, nLen, "hdel %s_%s_index %s", tableName, field.c_str(), (*(--iter)).c_str());
-											if (!bRet)
-											{
-												m_strError = "delete index record error";
-											}
-										}
-										pIndexFields = pBegin;
-									}
-								}
-
-								delete[] pIndexFields;
-
-							}
-
-
-							// 直接删除该记录
-							bRet = ExecuteRedisCommand(RedisCommand::HDEL_COMMAND, nullptr, nLen, "hdel %s_record %I64d", tableName, i);
-							if (!bRet)
-								m_strError = "delete record error";
-						}
-					}
-					getValues.clear();
-					getFields.clear();
-				}
-			}
-			if (nSatisfy == 0)
-			{
-				nReords = 0;
-				delete[] pRecords;
-				pRecords = nullptr;
-			}
-			else
-			{
-				nReords = nSatisfy;
-			}
-		}
-	}
-	return true;
-}
-
 bool CParseSql::DoSelect(std::vector<std::string>& vectFields, QueryTree* pTree, const char* tableName, DataRecord**& pRecords, int& nReords, std::vector<int>& vectNums)
 {
 	// 先检查表是否存在
@@ -1501,6 +1266,7 @@ bool CParseSql::DoSelect(std::vector<std::string>& vectFields, QueryTree* pTree,
 		void* pFiled = new char[1024];
 		memset(pFiled, 0, 1024);
 		int nLen = 0;
+		char* pBegin = (char*)pFiled;
 		bool bRet = ExecuteRedisCommand(RedisCommand::SMEMBERS_COMMAND, pFiled, nLen, "smembers %s_fields", tableName);
 		if (!bRet)
 		{
@@ -1524,7 +1290,7 @@ bool CParseSql::DoSelect(std::vector<std::string>& vectFields, QueryTree* pTree,
 			}
 			vectFields.push_back(sBegin);
 		}
-		delete[] pFiled;
+		delete[] pBegin;
 	}
 	std::vector<std::string> condiField;
 	std::vector<std::string> indexField;
@@ -1609,10 +1375,11 @@ bool CParseSql::DoSelect(std::vector<std::string>& vectFields, QueryTree* pTree,
 						bRet = IsSatisfyRecord(getFields, getValues, pTree);
 						if (bRet) // 该条记录符合查找条件
 						{
-							pRecords = new DataRecord*[1];
+							pRecords = new DataRecord*[2]; // 多出一条空记录用于cursor
 							pRecords[0] = new DataRecord;
 							pRecords[0]->pData = new char[nLen];
 							pRecords[0]->nLen = nLen;
+							pRecords[1] = nullptr;
 							memcpy(pRecords[0]->pData, pValue, nLen);
 							nReords = 1;
 							std::stringstream is;
@@ -1638,11 +1405,11 @@ bool CParseSql::DoSelect(std::vector<std::string>& vectFields, QueryTree* pTree,
 			std::stringstream ss;
 			ss << (char*)pValue;
 			ss >> records;
-			pRecords = new DataRecord*[records];
-			for (int i = 0; i < records; i++)
+			pRecords = new DataRecord*[records + 1]; // 多分配一个空间 用于判断结束
+			for (int i = 0; i < records + 1; i++)
 				pRecords[i] = nullptr;
 			int nSatisfy = 0;
-			for (long long i = 1; i <= records; ++i) // 记录从1开始
+			for (long long i = 1; i <= records + 1; ++i) // 记录从1开始
 			{
 				memset(pValue, 0, 1024);
 				bRet = ExecuteRedisCommand(RedisCommand::HGET_COMMAND, pValue, nLen, "hget %s_record %I64d", tableName, i); // 获取记录信息
@@ -1674,6 +1441,11 @@ bool CParseSql::DoSelect(std::vector<std::string>& vectFields, QueryTree* pTree,
 						getFields.clear();
 						getValues.clear();
 						vectNums.push_back(i);
+					}
+					else
+					{
+						getFields.clear();
+						getValues.clear();
 					}
 				}
 			}

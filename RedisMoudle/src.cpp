@@ -14,11 +14,12 @@ void RunCmd()
 		std::string strInput = "";
 		std::cout << strPrompt.c_str();
 		getline(std::cin, strInput);
-		g_parseSql.Parse(strInput.c_str(), strInput.size());
+		void* hRecord = nullptr;
+		g_parseSql.Parse(hRecord, strInput.c_str(), strInput.size());
 	}
 }
 
-int main()
+int mainK()
 {
 	bool bRet = g_redisManage.Init("127.0.0.1", 6379);
 	if (!bRet)

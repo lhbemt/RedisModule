@@ -44,7 +44,7 @@ int CScanner::Scan()
 	char ch;
 	do {
 		ch = get();
-		if (ch == EOF)
+		if (ch == EOF || ch == 0)
 			return EOF;
 	} while (isspace(ch)); // Ìø¹ý¿Õ°×·û
 	switch (ch)
