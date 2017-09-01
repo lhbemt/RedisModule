@@ -1088,8 +1088,20 @@ bool CParseSql::UpdateTable()
 				{
 					bool bExists = false;
 					CheckKeyExists((vectFields[j]).c_str(), RedisExistKey::IS_INDEX, bExists, tableName); // 判断是否是索引字段
+					
 					if (bExists)
 					{
+						// 先判断该字段要更改的记录会不会影响唯一索引
+						int n = 0;
+						bRet = ExecuteRedisCommand(RedisCommand::HGET_COMMAND, nullptr, n, "hget %s_%s_index %s", tableName, vectFields[j].c_str(), vectValue.at(iter - getFields.begin()).c_str());
+						if (bRet)
+						{
+							m_strError = "already have index record"; // 已经存在该索引记录 插入记录失败
+							bError = true;
+							break;
+						}
+
+
 						// 先删除索引
 						int nLen = 0;
 						bool bRet = ExecuteRedisCommand(RedisCommand::HDEL_COMMAND, nullptr, nLen, "hdel %s_%s_index %s", tableName, vectFields[j].c_str(), getValues.at(iter - getFields.begin()).c_str());
@@ -1148,6 +1160,8 @@ bool CParseSql::UpdateTable()
 			}
 			else
 				break;
+			getValues.clear();
+			getFields.clear();
 		}
 	}
 
