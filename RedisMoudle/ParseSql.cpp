@@ -1296,7 +1296,8 @@ bool CParseSql::DoSelect(std::vector<std::string>& vectFields, QueryTree* pTree,
 	std::vector<std::string> indexField;
 	std::vector<IndexValue> indexValue; // 索引字段对应的值
 	std::queue<QueryTree*> queueTree;
-	// 先检查条件树是否有索引字段
+	// 先检查条件树是否有索引字段 // 有or的情况下且or的字段不是索引，则按索引查找无意义
+	bool bFindOr = false;
 	if (pTree)
 	{
 		queueTree.push(pTree);
@@ -1317,6 +1318,8 @@ bool CParseSql::DoSelect(std::vector<std::string>& vectFields, QueryTree* pTree,
 					indexField.push_back(str);
 					indexValue.push_back(value);
 				}
+				if (pFind->pData->nToken == token_or)
+					bFindOr = true;
 			}
 			if (pFind->lTree)
 				queueTree.push(pFind->lTree);
@@ -1324,6 +1327,11 @@ bool CParseSql::DoSelect(std::vector<std::string>& vectFields, QueryTree* pTree,
 				queueTree.push(pFind->rTree);
 		}
 	}
+
+	if (bFindOr) // 有or的情况下 检查条件是否都是索引字段
+		if (condiField.size() != indexField.size()) // 条件字段不都是索引 索引无意义 按照顺序比较记录
+			indexField.clear();
+
 
 	// 检查条件字段是否都存在
 	for (auto& filed : condiField)
@@ -1345,6 +1353,10 @@ bool CParseSql::DoSelect(std::vector<std::string>& vectFields, QueryTree* pTree,
 	if (!indexField.empty()) // 有索引字段
 	{
 		// 仅先处理"="的情况
+		pRecords = new DataRecord*[indexField.size() + 1]; // 多分配一个空间 用于判断结束
+		for (int i = 0; i < indexField.size() + 1; i++)
+			pRecords[i] = nullptr;
+		int nSatisfy = 0;
 		for (int i = 0; i < indexValue.size(); ++i)
 		{
 			if (indexValue[i].nToken == token_eq) // 相等
@@ -1375,13 +1387,12 @@ bool CParseSql::DoSelect(std::vector<std::string>& vectFields, QueryTree* pTree,
 						bRet = IsSatisfyRecord(getFields, getValues, pTree);
 						if (bRet) // 该条记录符合查找条件
 						{
-							pRecords = new DataRecord*[2]; // 多出一条空记录用于cursor
-							pRecords[0] = new DataRecord;
-							pRecords[0]->pData = new char[nLen];
-							pRecords[0]->nLen = nLen;
-							pRecords[1] = nullptr;
-							memcpy(pRecords[0]->pData, pValue, nLen);
-							nReords = 1;
+							pRecords[nSatisfy] = new DataRecord;
+							pRecords[nSatisfy]->pData = new char[nLen];
+							pRecords[nSatisfy]->nLen = nLen;
+							memcpy(pRecords[nSatisfy]->pData, pValue, nLen);
+							//nReords = nSatisfy + 1;
+							nSatisfy++;
 							std::stringstream is;
 							is << pRecordNum;
 							int iRecord = 0;
@@ -1392,8 +1403,18 @@ bool CParseSql::DoSelect(std::vector<std::string>& vectFields, QueryTree* pTree,
 						getFields.clear();
 					}
 				}
-				break;
+				//break;
 			}
+		}
+		if (nSatisfy == 0)
+		{
+			nReords = 0;
+			delete[] pRecords;
+			pRecords = nullptr;
+		}
+		else
+		{
+			nReords = nSatisfy;
 		}
 	}
 	if (!bDoIndex) // 没有处理索引 按正常方式查找
