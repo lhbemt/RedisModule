@@ -973,7 +973,15 @@ bool CParseSql::DeleteTable() // delete
 	//delete
 	if (pRecord)
 	{
-
+		for (int i = 0; i < nRecords; ++i)
+		{
+			if (pRecord[i])
+			{
+				delete[](pRecord[i])->pData;
+				delete (pRecord[i]);
+			}
+		}
+		delete[] pRecord;
 	}
 
 	std::queue<QueryTree*> queueTree;
